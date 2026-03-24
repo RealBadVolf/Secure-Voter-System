@@ -1,0 +1,36 @@
+# Data volumes (never commit database data)
+data/registration/*
+data/election/*
+data/votes/*
+data/votes-readonly/*
+data/exports/*
+!data/*/.gitkeep
+
+# Logs
+logs/*
+!logs/.gitkeep
+
+# Certificates
+certs/*
+!certs/.gitkeep
+
+# Environment (production secrets)
+.env.production
+
+# Go
+src/vendor/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

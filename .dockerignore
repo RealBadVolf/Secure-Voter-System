@@ -1,0 +1,6 @@
+data/
+logs/
+certs/
+*.md
+.git
+.env.production

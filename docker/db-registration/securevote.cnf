@@ -1,0 +1,50 @@
+[mysqld]
+# Character set
+character-set-server=utf8mb4
+collation-server=utf8mb4_unicode_ci
+
+# InnoDB — this is where the magic happens with 17M rows
+innodb_buffer_pool_size=4G
+innodb_buffer_pool_instances=4
+innodb_log_file_size=512M
+innodb_log_buffer_size=64M
+innodb_flush_log_at_trx_commit=2
+innodb_flush_method=O_DIRECT
+innodb_file_per_table=1
+innodb_io_capacity=2000
+innodb_io_capacity_max=4000
+innodb_read_io_threads=8
+innodb_write_io_threads=8
+
+# Query tuning
+join_buffer_size=256M
+sort_buffer_size=64M
+read_buffer_size=16M
+read_rnd_buffer_size=32M
+tmp_table_size=256M
+max_heap_table_size=256M
+
+# Connections
+max_connections=200
+thread_cache_size=16
+
+# Query cache (helps repeated searches)
+query_cache_type=1
+query_cache_size=128M
+query_cache_limit=4M
+
+# Table cache
+table_open_cache=2000
+table_definition_cache=1400
+
+# Import optimization
+bulk_insert_buffer_size=256M
+
+# Logging
+general_log=0
+slow_query_log=1
+slow_query_log_file=/var/log/mysql/slow.log
+long_query_time=2
+
+# Import speed (set during bulk load)
+innodb_autoinc_lock_mode=2

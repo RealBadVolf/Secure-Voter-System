@@ -1,0 +1,18 @@
+[server]
+addr = ":9443"
+
+[logging]
+level = "info"
+format = "json"
+
+[database.registration]
+host = "db-registration"
+port = 3306
+user = "sv_reg_user"
+name = "securevote_registration"
+
+[database.election]
+host = "db-election"
+port = 3306
+user = "sv_elec_user"
+name = "securevote_election"

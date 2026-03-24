@@ -1,0 +1,20 @@
+[server]
+addr = ":8080"
+
+[machine]
+id = "SIM-0001"
+precinct = "1042"
+election = "general-2026"
+
+[biometric]
+auto_approve_threshold = 0.92
+manual_review_threshold = 0.80
+
+[session]
+ballot_timeout_minutes = 15
+max_spoil_attempts = 3
+presence_lost_seconds = 10
+
+[logging]
+level = "debug"
+format = "json"

@@ -1,0 +1,17 @@
+[server]
+addr = ":8443"
+
+[logging]
+level = "info"
+format = "json"
+
+[database.votes]
+host = "db-votes-readonly"
+port = 3306
+user = "sv_verify_user"
+name = "securevote_votes"
+
+[ratelimit]
+requests_per_ip_per_hour = 10
+pin_lockout_after_failures = 3
+pin_lockout_duration_hours = 24

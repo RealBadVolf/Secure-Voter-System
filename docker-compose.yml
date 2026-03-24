@@ -1,0 +1,351 @@
+# ============================================================================
+# SecureVote — Docker Compose
+# ============================================================================
+#
+# Architecture:
+#   Network "sv-net-reg"     → db-registration (isolated)
+#   Network "sv-net-elec"    → db-election (isolated)
+#   Network "sv-net-votes"   → db-votes, db-votes-readonly (isolated)
+#   Network "sv-net-admin"   → sv-admin ↔ db-registration, db-election
+#   Network "sv-net-verify"  → sv-verify ↔ db-votes-readonly
+#   Network "sv-net-public"  → nginx ↔ sv-verify (internet-facing)
+#   Network "sv-net-machine" → sv-machine-sim ↔ db-registration, db-election, db-votes
+#
+# No service touches more than the databases it needs.
+# ============================================================================
+
+services:
+
+  # --------------------------------------------------------------------------
+  # DATABASE TIER — Three isolated MariaDB instances
+  # --------------------------------------------------------------------------
+
+  db-registration:
+    build:
+      context: ./docker/db-registration
+    container_name: sv-db-registration
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_REG_ROOT_PW:-sv-reg-root-2026}
+      MARIADB_DATABASE: securevote_registration
+      MARIADB_USER: sv_reg_user
+      MARIADB_PASSWORD: ${DB_REG_PW:-sv-reg-pw-2026}
+    volumes:
+      - ./data/registration:/var/lib/mysql
+    ports:
+      - "13306:3306"
+    networks:
+      - sv-net-reg
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+          cpus: "8"
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p${DB_REG_ROOT_PW:-sv-reg-root-2026}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  db-election:
+    build:
+      context: ./docker/db-election
+    container_name: sv-db-election
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ELEC_ROOT_PW:-sv-elec-root-2026}
+      MARIADB_DATABASE: securevote_election
+      MARIADB_USER: sv_elec_user
+      MARIADB_PASSWORD: ${DB_ELEC_PW:-sv-elec-pw-2026}
+    volumes:
+      - ./data/election:/var/lib/mysql
+      - ./migrations/election:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "13307:3306"
+    networks:
+      - sv-net-elec
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ELEC_ROOT_PW:-sv-elec-root-2026}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  db-votes:
+    build:
+      context: ./docker/db-votes
+    container_name: sv-db-votes
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_VOTES_ROOT_PW:-sv-votes-root-2026}
+      MARIADB_DATABASE: securevote_votes
+      MARIADB_USER: sv_votes_user
+      MARIADB_PASSWORD: ${DB_VOTES_PW:-sv-votes-pw-2026}
+    volumes:
+      - ./data/votes:/var/lib/mysql
+      - ./migrations/votes:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "13308:3306"
+    networks:
+      - sv-net-votes
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p${DB_VOTES_ROOT_PW:-sv-votes-root-2026}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  db-votes-readonly:
+    build:
+      context: ./docker/db-votes-readonly
+    container_name: sv-db-votes-readonly
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_RO_ROOT_PW:-sv-ro-root-2026}
+      MARIADB_DATABASE: securevote_votes
+      MARIADB_USER: sv_verify_user
+      MARIADB_PASSWORD: ${DB_RO_PW:-sv-ro-pw-2026}
+    volumes:
+      - ./data/votes-readonly:/var/lib/mysql
+      - ./migrations/votes:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "13309:3306"
+    networks:
+      - sv-net-votes-ro
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p${DB_RO_ROOT_PW:-sv-ro-root-2026}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # APPLICATION TIER
+  # --------------------------------------------------------------------------
+
+  sv-admin:
+    build:
+      context: .
+      dockerfile: docker/sv-admin/Dockerfile
+    container_name: sv-admin
+    depends_on:
+      db-registration:
+        condition: service_healthy
+      db-election:
+        condition: service_healthy
+    environment:
+      SV_DB_REG_HOST: db-registration
+      SV_DB_REG_PORT: 3306
+      SV_DB_REG_USER: sv_reg_user
+      SV_DB_REG_PASS: ${DB_REG_PW:-sv-reg-pw-2026}
+      SV_DB_REG_NAME: securevote_registration
+      SV_DB_ELEC_HOST: db-election
+      SV_DB_ELEC_PORT: 3306
+      SV_DB_ELEC_USER: sv_elec_user
+      SV_DB_ELEC_PASS: ${DB_ELEC_PW:-sv-elec-pw-2026}
+      SV_DB_ELEC_NAME: securevote_election
+      SV_ADMIN_ADDR: ":9443"
+    ports:
+      - "9443:9443"
+    networks:
+      - sv-net-reg
+      - sv-net-elec
+      - sv-net-admin
+    volumes:
+      - ./logs:/app/logs
+      - ./configs:/app/configs:ro
+    restart: unless-stopped
+
+  sv-verify:
+    build:
+      context: .
+      dockerfile: docker/sv-verify/Dockerfile
+    container_name: sv-verify
+    depends_on:
+      db-votes-readonly:
+        condition: service_healthy
+    environment:
+      SV_DB_VOTES_HOST: db-votes-readonly
+      SV_DB_VOTES_PORT: 3306
+      SV_DB_VOTES_USER: sv_verify_user
+      SV_DB_VOTES_PASS: ${DB_RO_PW:-sv-ro-pw-2026}
+      SV_DB_VOTES_NAME: securevote_votes
+      SV_VERIFY_ADDR: ":8443"
+    ports:
+      - "18443:8443"
+    networks:
+      - sv-net-votes-ro
+      - sv-net-public
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  sv-machine-sim:
+    build:
+      context: .
+      dockerfile: docker/sv-machine-sim/Dockerfile
+    container_name: sv-machine-sim
+    depends_on:
+      db-registration:
+        condition: service_healthy
+      db-election:
+        condition: service_healthy
+      db-votes:
+        condition: service_healthy
+    environment:
+      SV_DB_REG_HOST: db-registration
+      SV_DB_REG_PORT: 3306
+      SV_DB_REG_USER: sv_reg_user
+      SV_DB_REG_PASS: ${DB_REG_PW:-sv-reg-pw-2026}
+      SV_DB_REG_NAME: securevote_registration
+      SV_DB_ELEC_HOST: db-election
+      SV_DB_ELEC_PORT: 3306
+      SV_DB_ELEC_USER: sv_elec_user
+      SV_DB_ELEC_PASS: ${DB_ELEC_PW:-sv-elec-pw-2026}
+      SV_DB_ELEC_NAME: securevote_election
+      SV_DB_VOTES_HOST: db-votes
+      SV_DB_VOTES_PORT: 3306
+      SV_DB_VOTES_USER: sv_votes_user
+      SV_DB_VOTES_PASS: ${DB_VOTES_PW:-sv-votes-pw-2026}
+      SV_DB_VOTES_NAME: securevote_votes
+      SV_SIM_ADDR: ":8080"
+    ports:
+      - "18080:8080"
+    networks:
+      - sv-net-reg
+      - sv-net-elec
+      - sv-net-votes
+      - sv-net-machine
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  sv-tabulator:
+    build:
+      context: .
+      dockerfile: docker/sv-tabulator/Dockerfile
+    container_name: sv-tabulator
+    depends_on:
+      db-votes:
+        condition: service_healthy
+      db-election:
+        condition: service_healthy
+    environment:
+      SV_DB_VOTES_HOST: db-votes
+      SV_DB_VOTES_PORT: 3306
+      SV_DB_VOTES_USER: sv_votes_user
+      SV_DB_VOTES_PASS: ${DB_VOTES_PW:-sv-votes-pw-2026}
+      SV_DB_VOTES_NAME: securevote_votes
+      SV_DB_ELEC_HOST: db-election
+      SV_DB_ELEC_PORT: 3306
+      SV_DB_ELEC_USER: sv_elec_user
+      SV_DB_ELEC_PASS: ${DB_ELEC_PW:-sv-elec-pw-2026}
+      SV_DB_ELEC_NAME: securevote_election
+    networks:
+      - sv-net-votes
+      - sv-net-elec
+    volumes:
+      - ./data/exports:/app/exports
+      - ./logs:/app/logs
+    profiles:
+      - tabulator
+    command: ["echo", "Tabulator ready. Run with: docker compose run sv-tabulator <command>"]
+
+  sv-idcard:
+    build:
+      context: ./docker/sv-idcard
+    container_name: sv-idcard
+    depends_on:
+      db-registration:
+        condition: service_healthy
+      db-election:
+        condition: service_healthy
+    environment:
+      DB_HOST: db-registration
+      DB_USER: sv_reg_user
+      DB_PASS: ${DB_REG_PW:-sv-reg-pw-2026}
+      DB_NAME: securevote_registration
+      DB_ELEC_HOST: db-election
+      DB_ELEC_USER: sv_elec_user
+      DB_ELEC_PASS: ${DB_ELEC_PW:-sv-elec-pw-2026}
+      DB_ELEC_NAME: securevote_election
+      PORT: "8090"
+    ports:
+      - "18090:8090"
+    networks:
+      - sv-net-reg
+      - sv-net-elec
+      - sv-net-admin
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # REVERSE PROXY — Public-facing (simulates Zone 5 boundary)
+  # --------------------------------------------------------------------------
+
+  nginx:
+    build:
+      context: ./docker/nginx
+    container_name: sv-nginx
+    depends_on:
+      - sv-verify
+    ports:
+      - "10443:443"
+      - "10080:80"
+    networks:
+      - sv-net-public
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
+      - ./logs/nginx:/var/log/nginx
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # DEV TOOLS (optional, not started by default)
+  # --------------------------------------------------------------------------
+
+  adminer:
+    image: adminer:latest
+    container_name: sv-adminer
+    ports:
+      - "8888:8080"
+    networks:
+      - sv-net-reg
+      - sv-net-elec
+      - sv-net-votes
+      - sv-net-votes-ro
+    profiles:
+      - dev
+    restart: unless-stopped
+
+# ============================================================================
+# NETWORKS — Isolated per security zone
+# ============================================================================
+
+networks:
+  sv-net-reg:
+    name: sv-net-reg
+    driver: bridge
+    internal: true
+
+  sv-net-elec:
+    name: sv-net-elec
+    driver: bridge
+    internal: true
+
+  sv-net-votes:
+    name: sv-net-votes
+    driver: bridge
+    internal: true
+
+  sv-net-votes-ro:
+    name: sv-net-votes-ro
+    driver: bridge
+    internal: true
+
+  sv-net-admin:
+    name: sv-net-admin
+    driver: bridge
+
+  sv-net-machine:
+    name: sv-net-machine
+    driver: bridge
+
+  sv-net-public:
+    name: sv-net-public
+    driver: bridge
